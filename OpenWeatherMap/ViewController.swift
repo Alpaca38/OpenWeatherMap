@@ -6,11 +6,15 @@
 //
 
 import UIKit
+import CoreLocation
+import MapKit
 import SnapKit
 import Alamofire
 import Kingfisher
 
 class ViewController: UIViewController {
+    
+    let locationManager = CLLocationManager()
     
     let dateLabel = UILabel()
     let locationLabel = UILabel()
@@ -28,10 +32,15 @@ class ViewController: UIViewController {
         self.view.addSubview(view)
         return view
     }()
+    lazy var mapView = {
+        let view = MKMapView()
+        self.view.addSubview(view)
+        return view
+    }()
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        callRequest()
+        locationManager.delegate = self
         configureLayout()
         configureUI()
     }
@@ -62,6 +71,11 @@ class ViewController: UIViewController {
         happyDayLabel.snp.makeConstraints {
             $0.height.equalTo(45)
         }
+        
+        mapView.snp.makeConstraints {
+            $0.bottom.horizontalEdges.equalTo(view.safeAreaLayoutGuide)
+            $0.height.equalTo(200)
+        }
     }
     
     func configureUI() {
@@ -72,7 +86,6 @@ class ViewController: UIViewController {
         
         locationLabel.font = .systemFont(ofSize: 24)
         locationLabel.textColor = .white
-        locationLabel.text = "서울"
         
         tempLabel.setWeatherLabel()
         humidityLabel.setWeatherLabel()
@@ -86,8 +99,8 @@ class ViewController: UIViewController {
         weatherImageView.contentMode = .scaleAspectFit
     }
     
-    func callRequest() {
-        let url = "\(APIURL.weatherAPIURL)q=Seoul&appid=\(APIKey.weatherAPIKey)"
+    func callRequest(coordinate: CLLocationCoordinate2D) {
+        let url = "\(APIURL.weatherAPIURL)lat=\(coordinate.latitude)&lon=\(coordinate.longitude)&appid=\(APIKey.weatherAPIKey)"
         AF.request(url).responseDecodable(of: WeatherData.self) { response in
             switch response.result {
             case .success(let value):
@@ -95,6 +108,7 @@ class ViewController: UIViewController {
                 self.humidityLabel.text = value.humidityString
                 self.windLabel.text = value.windSpeedString
                 self.weatherImageView.kf.setImage(with: value.iconURL)
+                self.locationLabel.text = "내 위치"
                 
             case .failure(let error):
                 print(error)
@@ -103,3 +117,69 @@ class ViewController: UIViewController {
     }
 }
 
+extension ViewController {
+    func checkDeviceLocationAuthorization() {
+        DispatchQueue.global().async {
+            if CLLocationManager.locationServicesEnabled() {
+                self.currentLocationAuthorization()
+            } else {
+                DispatchQueue.main.async {
+                    self.showAlert(title: "아이폰 위치 서비스를 활성화해야합니다.", message: "설정 - 개인정보 보호 및 보안 - 위치 서비스를 활성화 해주세요. 설정으로 이동하시겠습니까?")
+                }
+            }
+        }
+    }
+    
+    func currentLocationAuthorization() {
+        let status = locationManager.authorizationStatus
+        
+        switch status {
+        case .notDetermined:
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.requestWhenInUseAuthorization()
+        case .denied:
+            DispatchQueue.main.async {
+                self.showAlert(title: "앱의 위치 권한을 설정해주세요.", message: "설정 - 개인정보 보호 및 보안 - 위치 서비스에서 앱의 위치 권한을 설정해주세요. 설정으로 이동하시겠습니까?")
+            }
+        case .authorizedWhenInUse:
+            locationManager.startUpdatingLocation()
+        default:
+            print(status)
+        }
+    }
+    
+    func setRegionAndAnnotation(center: CLLocationCoordinate2D) {
+        let region = MKCoordinateRegion(center: center, latitudinalMeters: 500, longitudinalMeters: 500)
+        mapView.setRegion(region, animated: true)
+        let annotation = MKPointAnnotation()
+        annotation.coordinate = center
+        mapView.addAnnotation(annotation)
+    }
+    
+    func showAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        let ok = UIAlertAction(title: "설정으로 이동", style: .default) { _ in
+            UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+        }
+        let cancel = UIAlertAction(title: "취소", style: .cancel)
+        alert.addAction(ok)
+        alert.addAction(cancel)
+        present(alert, animated: true)
+    }
+}
+
+extension ViewController: CLLocationManagerDelegate {
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let coordinate = locations.last?.coordinate {
+            setRegionAndAnnotation(center: coordinate)
+            callRequest(coordinate: coordinate)
+        }
+        locationManager.stopUpdatingLocation()
+    }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
+        print(error.localizedDescription)
+    }
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        checkDeviceLocationAuthorization()
+    }
+}
